@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       source_repo_url:
-        description: "Source repository URL (e.g., https://github.com/gethopp/hopp)"
+        description: "Source repository URL (e.g., https://github.com/remotyxyz/remoty)"
         required: true
         type: string
       version:
@@ -179,7 +179,16 @@ jobs:
         with:
           target: ${{ matrix.settings.target }}
 
-      - uses: ./source-repo/.github/actions/setup-js
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: source-repo/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: source-repo
+        run: pnpm install
 
       # - name: Run setup script
       #   run: pnpm -w remoty-setup
