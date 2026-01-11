@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       source_repo_url:
-        description: "Source repository URL (e.g., https://github.com/remotyxyz/remoty)"
+        description: "Source repository URL"
         required: true
         type: string
       version:
@@ -27,8 +27,8 @@ permissions:
 
 env:
   VITE_MODE: "production"
-  VITE_API_URL: "https://api.remoty.ai"
-  VITE_SERVER_URL: "https://api.remoty.ai"
+  VITE_API_URL: ${{ secrets.VITE_API_URL }}
+  VITE_SERVER_URL: ${{ secrets.VITE_SERVER_URL }}
   REMOTY_DESKTOP_SENTRY_URL: ${{ secrets.REMOTY_DESKTOP_SENTRY_URL }}
   RUSTFLAGS: "-A unused-imports"
   APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
