@@ -149,12 +149,12 @@ jobs:
       - name: Verify certificate
         run: security find-identity -v -p codesigning ${{ runner.temp }}/build.keychain
 
-      - name: Install stable toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-          target: ${{ matrix.settings.target }}
-          cache: true
+      # - name: Install stable toolchain
+      #   uses: actions-rust-lang/setup-rust-toolchain@v1
+      #   with:
+      #     toolchain: stable
+      #     target: ${{ matrix.settings.target }}
+      #     cache: true
 
       - name: Create .env file in root
         working-directory: source-repo
@@ -171,10 +171,10 @@ jobs:
           echo "//npm.pkg.github.com/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
           echo "@remotyxyz:registry=https://npm.pkg.github.com/" >> ~/.npmrc
 
-      - name: Rust setup
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.settings.target }}
+      # - name: Rust setup
+      #   uses: dtolnay/rust-toolchain@stable
+      #   with:
+      #     targets: ${{ matrix.settings.target }}
 
       - uses: ./source-repo/.github/actions/setup-rust-cache
         with:
