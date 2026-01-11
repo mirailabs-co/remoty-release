@@ -89,7 +89,7 @@ jobs:
       matrix:
         settings:
           - target: x86_64-apple-darwin
-            runner: macos-13
+            runner: macos-15-intel
             platform: darwin-x86_64
             args: "--config src-tauri/tauri.macos.conf.json"
             artifact_ext: ".dmg"
