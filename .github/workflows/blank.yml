@@ -89,16 +89,16 @@ jobs:
       matrix:
         settings:
           - target: x86_64-apple-darwin
-            runner: macos-latest
+            runner: macos-13
             platform: darwin-x86_64
             args: "--config src-tauri/tauri.macos.conf.json"
             artifact_ext: ".dmg"
             artifact_name: "Remoty_x64.dmg"
-          - target: aarch64-apple-darwin
-            runner: macos-latest
-            platform: darwin-aarch64
-            artifact_ext: ".dmg"
-            artifact_name: "Remoty_aarch64.dmg"
+          # - target: aarch64-apple-darwin
+          #   runner: macos-14
+          #   platform: darwin-aarch64
+          #   artifact_ext: ".dmg"
+          #   artifact_name: "Remoty_aarch64.dmg"
           # - target: x86_64-pc-windows-msvc
           #   runner: windows-latest
           #   platform: windows-x86_64
