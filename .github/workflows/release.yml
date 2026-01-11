@@ -1,0 +1,330 @@
+name: "Build Remoty Release"
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo_url:
+        description: "Source repository URL (e.g., https://github.com/gethopp/hopp)"
+        required: true
+        type: string
+      version:
+        description: "Release version (e.g., v0.0.33)"
+        required: true
+        type: string
+      release_name:
+        description: "Release name"
+        required: false
+        default: "Remoty Release"
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Required permissions for creating releases
+permissions:
+  contents: write
+
+env:
+  VITE_MODE: "production"
+  VITE_API_URL: "https://api.remoty.ai"
+  VITE_SERVER_URL: "https://api.remoty.ai"
+  REMOTY_DESKTOP_SENTRY_URL: ${{ secrets.REMOTY_DESKTOP_SENTRY_URL }}
+  RUSTFLAGS: "-A unused-imports"
+  APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+  APPLE_KEYCHAIN: ${{ secrets.APPLE_KEYCHAIN }}
+  APPLE_ID: ${{ secrets.APPLE_ID }}
+  APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+  APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+  APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+  APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+  APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
+  APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+  APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+jobs:
+  create_release:
+    runs-on: ubuntu-22.04
+    outputs:
+      release_id: ${{ steps.create_release.outputs.id }}
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Checkout packaging repository
+        uses: actions/checkout@v4
+
+      - name: Extract repository info
+        id: repo_info
+        shell: bash
+        run: |
+          repo_url="${{ github.event.inputs.source_repo_url }}"
+          repo_path=${repo_url#https://github.com/}
+          echo "repo_path=$repo_path" >> $GITHUB_OUTPUT
+
+          owner_repo=$(echo $repo_path | cut -d'/' -f1-2)
+          echo "owner_repo=$owner_repo" >> $GITHUB_OUTPUT
+
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.repo_info.outputs.owner_repo }}
+          path: source-repo
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: ${{ github.event.inputs.release_name }} ${{ github.event.inputs.version }}
+          draft: true
+          prerelease: ${{ contains(github.event.inputs.version, 'alpha') || contains(github.event.inputs.version, 'beta') || contains(github.event.inputs.version, 'rc') }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+  build_desktop:
+    needs: create_release
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+            platform: darwin-x86_64
+            args: "--config src-tauri/tauri.macos.conf.json"
+            artifact_ext: ".dmg"
+            artifact_name: "Remoty_x64.dmg"
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            platform: darwin-aarch64
+            artifact_ext: ".dmg"
+            artifact_name: "Remoty_aarch64.dmg"
+          # - target: x86_64-pc-windows-msvc
+          #   runner: windows-latest
+          #   platform: windows-x86_64
+          #   artifact_ext: ".msi"
+          #   artifact_name: "Remoty_x64.msi"
+
+    runs-on: ${{ matrix.settings.runner }}
+
+    steps:
+      - name: Checkout packaging repository
+        uses: actions/checkout@v4
+
+      - name: Extract repository info
+        id: repo_info
+        shell: bash
+        run: |
+          repo_url="${{ github.event.inputs.source_repo_url }}"
+          repo_path=${repo_url#https://github.com/}
+          echo "repo_path=$repo_path" >> $GITHUB_OUTPUT
+
+          owner_repo=$(echo $repo_path | cut -d'/' -f1-2)
+          echo "owner_repo=$owner_repo" >> $GITHUB_OUTPUT
+
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.repo_info.outputs.owner_repo }}
+          path: source-repo
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+
+      - name: Create API Key File
+        run: echo "${{ secrets.APPLE_API_KEY_FILE }}" > api.p8
+
+      - uses: apple-actions/import-codesign-certs@v2
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: Verify certificate
+        run: security find-identity -v -p codesigning ${{ runner.temp }}/build.keychain
+
+      - name: Install stable toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          cache: true
+
+      - name: Create .env file in root
+        working-directory: source-repo
+        run: |
+          echo "VITE_MODE=production" >> .env
+          echo "REMOTY_DESKTOP_SENTRY_URL=${{ secrets.REMOTY_DESKTOP_SENTRY_URL }}" >> .env
+          echo "VITE_API_URL=${{ secrets.VITE_API_URL }}" >> .env
+          echo 'VITE_SERVER_URL=${{ secrets.VITE_SERVER_URL }}' >> .env
+          echo 'VITE_SOCKET_URL=${{ secrets.VITE_SOCKET_URL }}' >> .env
+          echo 'RUST_TARGET_TRIPLE=${{ matrix.settings.target }}' >> .env
+
+      - name: Authorize npm registry
+        run: |
+          echo "//npm.pkg.github.com/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+          echo "@remotyxyz:registry=https://npm.pkg.github.com/" >> ~/.npmrc
+
+      - name: Rust setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.settings.target }}
+
+      - uses: ./source-repo/.github/actions/setup-rust-cache
+        with:
+          target: ${{ matrix.settings.target }}
+
+      - uses: ./source-repo/.github/actions/setup-js
+
+      # - name: Run setup script
+      #   run: pnpm -w remoty-setup
+
+      - name: Build Tauri app
+        working-directory: source-repo/apps/desktop
+        run: pnpm tauri:buildProdMacos --target ${{ matrix.settings.target }}
+        env:
+          CI: false
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ github.workspace }}/api.p8
+          APPLE_KEYCHAIN: ${{ runner.temp }}/build.keychain
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Find built artifacts
+        id: find_artifacts
+        run: |
+          # Find DMG file
+          DMG_FILE=$(find source-repo/target/${{ matrix.settings.target }}/release/bundle/dmg -name "*.dmg" -type f 2>/dev/null | head -1)
+          if [ -n "$DMG_FILE" ]; then
+            echo "dmg_path=$DMG_FILE" >> $GITHUB_OUTPUT
+            echo "dmg_name=$(basename $DMG_FILE)" >> $GITHUB_OUTPUT
+            echo "Found DMG: $DMG_FILE"
+          fi
+
+          # Find updater files (sig and tar.gz)
+          UPDATER_FILE=$(find source-repo/target/${{ matrix.settings.target }}/release/bundle/macos -name "*.tar.gz" -type f 2>/dev/null | head -1)
+          if [ -n "$UPDATER_FILE" ]; then
+            echo "updater_path=$UPDATER_FILE" >> $GITHUB_OUTPUT
+            echo "updater_name=$(basename $UPDATER_FILE)" >> $GITHUB_OUTPUT
+            echo "Found updater: $UPDATER_FILE"
+          fi
+
+          SIG_FILE=$(find source-repo/target/${{ matrix.settings.target }}/release/bundle/macos -name "*.sig" -type f 2>/dev/null | head -1)
+          if [ -n "$SIG_FILE" ]; then
+            echo "sig_path=$SIG_FILE" >> $GITHUB_OUTPUT
+            echo "sig_name=$(basename $SIG_FILE)" >> $GITHUB_OUTPUT
+            echo "Found sig: $SIG_FILE"
+          fi
+
+      - name: Upload DMG to Release
+        if: steps.find_artifacts.outputs.dmg_path != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          files: ${{ steps.find_artifacts.outputs.dmg_path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Upload Updater files to Release
+        if: steps.find_artifacts.outputs.updater_path != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          files: |
+            ${{ steps.find_artifacts.outputs.updater_path }}
+            ${{ steps.find_artifacts.outputs.sig_path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Save platform info for latest.json
+        if: steps.find_artifacts.outputs.sig_path != ''
+        run: |
+          mkdir -p platform-info
+          SIGNATURE=$(cat ${{ steps.find_artifacts.outputs.sig_path }})
+          echo "{\"platform\": \"${{ matrix.settings.platform }}\", \"signature\": \"$SIGNATURE\", \"url\": \"https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.version }}/${{ steps.find_artifacts.outputs.updater_name }}\"}" > platform-info/${{ matrix.settings.platform }}.json
+
+      - name: Upload platform info artifact
+        if: steps.find_artifacts.outputs.sig_path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-info-${{ matrix.settings.platform }}
+          path: platform-info/
+
+  generate_latest_json:
+    needs: [create_release, build_desktop]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download all platform info artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: platform-info-*
+          merge-multiple: true
+          path: platform-info/
+
+      - name: Generate latest.json
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          VERSION="${VERSION#v}"  # Remove 'v' prefix
+
+          # Start building the JSON
+          echo "{" > latest.json
+          echo "  \"version\": \"$VERSION\"," >> latest.json
+          echo "  \"notes\": \"See release notes at https://github.com/${{ github.repository }}/releases/tag/${{ github.event.inputs.version }}\"," >> latest.json
+          echo "  \"pub_date\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"," >> latest.json
+          echo "  \"platforms\": {" >> latest.json
+
+          # Process each platform file
+          FIRST=true
+          for file in platform-info/*.json; do
+            if [ -f "$file" ]; then
+              PLATFORM=$(jq -r '.platform' "$file")
+              SIGNATURE=$(jq -r '.signature' "$file")
+              URL=$(jq -r '.url' "$file")
+              
+              if [ "$FIRST" = true ]; then
+                FIRST=false
+              else
+                echo "," >> latest.json
+              fi
+              
+              echo "    \"$PLATFORM\": {" >> latest.json
+              echo "      \"signature\": \"$SIGNATURE\"," >> latest.json
+              echo "      \"url\": \"$URL\"" >> latest.json
+              echo -n "    }" >> latest.json
+            fi
+          done
+
+          echo "" >> latest.json
+          echo "  }" >> latest.json
+          echo "}" >> latest.json
+
+          cat latest.json
+
+      - name: Upload latest.json to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          files: latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+  publish_release:
+    needs: [create_release, build_desktop, generate_latest_json]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
